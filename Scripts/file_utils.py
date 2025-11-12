@@ -75,9 +75,10 @@ def last_backup(DESTINATION_PATH):
     """
     try:
         files = [file for file in os.listdir(DESTINATION_PATH) if os.path.isfile(os.path.join(DESTINATION_PATH, file))]  # Get a list of all the files in the destination path
-        
+
         # Sort the list of files based on their modification time
-        files.sort(key=lambda file: get_modification_time(DESTINATION_PATH, file))
+        # NOTE: get_modification_time expects (file, DESTINATION_PATH)
+        files.sort(key=lambda file: get_modification_time(file, DESTINATION_PATH))
 
         # The most recently modified file
         most_recently_modified_file = files[-1]

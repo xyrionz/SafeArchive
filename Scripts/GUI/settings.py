@@ -34,14 +34,16 @@ class Settings:
     def create_settings_window(self):
         self.settings_window = tk.Toplevel(self.App)
         self.settings_window.title("Settings")
-        self.settings_window.geometry("775x235")
+        # Increased window size for better spacing (wider)
+        self.settings_window.geometry("1000x320")
         self.settings_window.iconbitmap("assets/ICO/gear.ico") if config['platform'] == "Windows" else None
         self.settings_window.resizable(False, False)  # Disable minimize/maximize buttons
         self.settings_window.configure(background=self.get_window_background())
 
 
     def create_frame(self):
-        self.frame = ctk.CTkFrame(master=self.settings_window, corner_radius=10, height=170, width=605)
+        # Widened frame to match increased window size
+        self.frame = ctk.CTkFrame(master=self.settings_window, corner_radius=10, height=300, width=980)
         self.frame.place(x=8, y=8)
 
 
@@ -183,7 +185,7 @@ class Settings:
             master=self.frame,
             text="Allow all system notifications",
             font=('Helvetica', 15),
-            command=lambda: Switch(key='notifications', switch_var=notifications_switch),
+            command=lambda: Switch(key='notifications', switch_var=notifications_switch_var),
             variable=notifications_switch_var,
             onvalue="on",
             offvalue="off"
