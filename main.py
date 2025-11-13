@@ -11,6 +11,7 @@ version = "1.5.0"
 # Import built-in modules
 import sys
 import runpy
+import os
 import tkinter as tk
 
 # Import module files
@@ -33,6 +34,47 @@ DESTINATION_PATH = config['destination_path'] + 'SafeArchive/'  # Get value from
 create_destination_directory_path(DESTINATION_PATH)
 config.load() # Load the JSON file into memory
 
+# Platform-safe icon helper
+def _set_window_icon(window):
+    """
+    Set window icon in a platform-safe way:
+      - on Windows: use .ico via iconbitmap
+      - on other platforms: prefer a .png via iconphoto (or convert ICO via Pillow)
+    Looks for assets/ICO/icon.ico and assets/ICO/icon.png relative to this file.
+    """
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    ico_path = os.path.join(base_dir, "assets", "ICO", "icon.ico")
+    png_path = os.path.join(base_dir, "assets", "ICO", "icon.png")
+
+    # Windows: .ico works with iconbitmap
+    if sys.platform.startswith("win"):
+        try:
+            if os.path.exists(ico_path):
+                window.iconbitmap(ico_path)
+            else:
+                print("Warning: icon.ico not found at", ico_path)
+        except Exception as e:
+            print("iconbitmap failed on Windows:", e)
+    else:
+        # Non-Windows: prefer PNG via iconphoto
+        try:
+            if os.path.exists(png_path):
+                window.iconphoto(False, tk.PhotoImage(file=png_path))
+            elif os.path.exists(ico_path):
+                # Try converting ICO -> PhotoImage via Pillow
+                try:
+                    from PIL import Image, ImageTk
+                    img = Image.open(ico_path)
+                    window.iconphoto(False, ImageTk.PhotoImage(img))
+                except Exception as pil_e:
+                    print("PIL conversion of ICO -> PNG failed:", pil_e)
+                    print("Consider converting assets/ICO/icon.ico to icon.png and retry.")
+            else:
+                # No icon files available; silently skip
+                pass
+        except Exception as e:
+            print("iconphoto failed:", e)
+
 try:
     if sys.argv[1] == "--nogui":
         runpy.run_path('cli.py')
@@ -52,8 +94,9 @@ class App(ctk.CTk):
         self.title(f"SafeArchive {version}")
         self.resizable(False, False)  # Disable minimize/maximize buttons
         self.geometry("500x360")
-        self.iconbitmap("assets/ICO/icon.ico") if config['platform'] == "Windows" else None
 
+        # Platform-safe icon setting
+        _set_window_icon(self)
 
         drive_label = ctk.CTkLabel(master=self, text="Drive", font=('Helvetica', 12))
         drive_label.place(x=15, y=15)

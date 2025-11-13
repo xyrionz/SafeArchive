@@ -1,10 +1,52 @@
 #!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
 
+import os
+import sys
 import tkinter as tk
 import customtkinter as ctk
 from .widgets import Combobox, Switch
 from ..configs import config
+
+
+def _set_window_icon(window, ico_name="gear.ico", png_name="gear.png"):
+    """Platform-safe icon setter. Looks for icons relative to this file's directory.
+    - On Windows: uses .ico via iconbitmap
+    - On other platforms: prefers .png via iconphoto, with a Pillow fallback to convert .ico
+    If no icon files are available, it silently skips setting the icon.
+    """
+    try:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        # assets are located at project_root/assets/ICO/
+        ico_path = os.path.normpath(os.path.join(base_dir, "..", "..", "assets", "ICO", ico_name))
+        png_path = os.path.normpath(os.path.join(base_dir, "..", "..", "assets", "ICO", png_name))
+
+        # Windows: .ico works with iconbitmap
+        if sys.platform.startswith("win"):
+            if os.path.exists(ico_path):
+                try:
+                    window.iconbitmap(ico_path)
+                except Exception as e:
+                    print("_set_window_icon: iconbitmap failed on Windows:", e)
+        else:
+            # Non-Windows: prefer PNG via iconphoto
+            if os.path.exists(png_path):
+                try:
+                    window.iconphoto(False, tk.PhotoImage(file=png_path))
+                except Exception as e:
+                    print("_set_window_icon: iconphoto failed with PNG:", e)
+            elif os.path.exists(ico_path):
+                # Try converting ICO -> PhotoImage via Pillow
+                try:
+                    from PIL import Image, ImageTk
+                    img = Image.open(ico_path)
+                    window.iconphoto(False, ImageTk.PhotoImage(img))
+                except Exception as pil_e:
+                    print("_set_window_icon: PIL conversion of ICO -> PNG failed:", pil_e)
+                    print("_set_window_icon: Consider converting %s -> %s" % (ico_path, png_path))
+            # else: skip quietly
+    except Exception as exc:
+        print("_set_window_icon: unexpected error:", exc)
 
 
 class Settings:
@@ -36,7 +78,10 @@ class Settings:
         self.settings_window.title("Settings")
         # Increased window size for better spacing (wider)
         self.settings_window.geometry("1000x320")
-        self.settings_window.iconbitmap("assets/ICO/gear.ico") if config['platform'] == "Windows" else None
+
+        # Platform-safe icon setting (looks for assets/ICO/gear.ico or gear.png)
+        _set_window_icon(self.settings_window, ico_name="gear.ico", png_name="gear.png")
+
         self.settings_window.resizable(False, False)  # Disable minimize/maximize buttons
         self.settings_window.configure(background=self.get_window_background())
 
