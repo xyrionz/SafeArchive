@@ -37,6 +37,31 @@ os.makedirs(BACKUP_STORE, exist_ok=True)
 
 print(f"[SafeArchive] Using BACKUP_STORE: {BACKUP_STORE}")
 
+# API key for protecting sensitive endpoints (set in Render env / GitHub Secrets)
+SERVICE_API_KEY = os.environ.get("SERVICE_API_KEY")
+
+
+def require_api_key():
+    """
+    If SERVICE_API_KEY is set, require a matching key in:
+      - header 'x-api-key' OR
+      - query param 'api_key'
+    Returns (True, None) if permitted, otherwise (False, (response, status_code)).
+    """
+    if not SERVICE_API_KEY:
+        # No API key set -> open access (backwards compatible)
+        return True, None
+
+    header_key = request.headers.get("x-api-key")
+    if header_key and header_key == SERVICE_API_KEY:
+        return True, None
+
+    q = request.args.get("api_key")
+    if q and q == SERVICE_API_KEY:
+        return True, None
+
+    return False, (jsonify({"error": "unauthorized - invalid or missing API key"}), 401)
+
 
 @app.route("/")
 def home():
@@ -125,6 +150,10 @@ def backup_route():
     Response:
       JSON {status: "ok", backup_file: "<filename>"} or error.
     """
+    ok, resp = require_api_key()
+    if not ok:
+        return resp
+
     try:
         if "file" not in request.files:
             return jsonify({"error": "file field missing"}), 400
@@ -163,6 +192,10 @@ def download_backup():
     GET /download?backup=<backup_filename>
     Returns the raw stored backup file (encrypted .enc.zip or plain .zip)
     """
+    ok, resp = require_api_key()
+    if not ok:
+        return resp
+
     try:
         backup = request.args.get("backup")
         if not backup:
@@ -185,6 +218,10 @@ def restore_route():
         - password (required if encrypted)
     Returns: a plain zip containing restored folder/files (downloadable)
     """
+    ok, resp = require_api_key()
+    if not ok:
+        return resp
+
     try:
         backup = request.form.get("backup")
         if not backup:
