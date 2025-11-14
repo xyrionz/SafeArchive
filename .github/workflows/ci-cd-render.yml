@@ -1,8 +1,9 @@
-name: CI-CD → Render (measure readiness)
+name: CI-CD → Render (no health poll)
 
 on:
   push:
     branches: [ main ]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -11,10 +12,6 @@ permissions:
 jobs:
   build-and-trigger-render:
     runs-on: ubuntu-latest
-    env:
-      PUBLIC_URL: ${{ secrets.PUBLIC_URL }}
-      DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
-      SERVICE_API_KEY: ${{ secrets.SERVICE_API_KEY }}  # optional, used if you secure /health
 
     steps:
       - name: Checkout
@@ -33,78 +30,31 @@ jobs:
 
       - name: Run tests (if present)
         run: |
-          if [ -f pytest.ini ] || [ -d tests ]; then
+          if [ -d tests ] || [ -f pytest.ini ]; then
             pytest -q || true
-          else
-            echo "No tests found, skipping pytest."
           fi
 
       - name: Trigger Render deploy hook
         id: trigger
         run: |
-          if [ -z "${{ secrets.RENDER_DEPLOY_HOOK }}" ]; then
-            echo "No RENDER_DEPLOY_HOOK set; skipping trigger."
-            echo "trigger_time=$(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> $GITHUB_OUTPUT
-            echo "hook_http_code=000" >> $GITHUB_OUTPUT
-          else
-            echo "Triggering Render deploy hook..."
-            START_TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-            echo "trigger_time=$START_TS" >> $GITHUB_OUTPUT
-            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}" || echo "000")
-            echo "hook_http_code=$HTTP_CODE" >> $GITHUB_OUTPUT
-            echo "hook_http_code=$HTTP_CODE"
-          fi
+          START=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          echo "trigger_time=$START" >> $GITHUB_OUTPUT
 
-      - name: Poll /health until ready (with optional API key)
-        id: readiness
-        run: |
-          if [ -z "${{ secrets.PUBLIC_URL }}" ]; then
-            echo "PUBLIC_URL not set. Exiting."
+          HOOK="${{ secrets.RENDER_DEPLOY_HOOK }}"
+          if [ -z "$HOOK" ]; then
+            echo "RENDER_DEPLOY_HOOK missing!"
             exit 1
           fi
 
-          TIMEOUT=${{ env.READINESS_TIMEOUT_SECONDS || 300 }}
-          INTERVAL=4
-          ELAPSED=0
-          READY=false
-          echo "Polling ${PUBLIC_URL}/health ... (timeout ${TIMEOUT}s)"
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$HOOK")
+          echo "hook_http_code=$CODE" >> $GITHUB_OUTPUT
+          echo "Triggered hook, code=$CODE"
 
-          # prepare curl auth header if SERVICE_API_KEY present
-          if [ -n "${{ secrets.SERVICE_API_KEY }}" ]; then
-            AUTH_HEADER="-H x-api-key: ${{ secrets.SERVICE_API_KEY }}"
-          else
-            AUTH_HEADER=""
-          fi
-
-          while [ $ELAPSED -lt $TIMEOUT ]; do
-            HTTP_CODE=$(sh -c "curl -s -o /dev/null -w '%{http_code}' --max-time 5 $AUTH_HEADER \"${PUBLIC_URL}/health\" || echo '000'")
-            echo "polled: $HTTP_CODE (elapsed ${ELAPSED}s)"
-            if [ "$HTTP_CODE" = "200" ]; then
-              READY=true
-              READY_TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-              echo "ready_time=$READY_TS" >> $GITHUB_OUTPUT
-              echo "seconds_to_ready=$ELAPSED" >> $GITHUB_OUTPUT
-              break
-            fi
-            sleep $INTERVAL
-            ELAPSED=$((ELAPSED + INTERVAL))
-          done
-
-          if [ "$READY" = "false" ]; then
-            READY_TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-            echo "ready_time=$READY_TS" >> $GITHUB_OUTPUT
-            echo "seconds_to_ready=>=$TIMEOUT" >> $GITHUB_OUTPUT
-            echo "Service did not become healthy within $TIMEOUT seconds."
-            exit 1
-          fi
-
-      - name: Write deploy metrics CSV
+      - name: Write deploy metrics CSV (no readiness check)
         run: |
           TRIGGER="${{ steps.trigger.outputs.trigger_time }}"
-          READY="${{ steps.readiness.outputs.ready_time }}"
-          SECONDS="${{ steps.readiness.outputs.seconds_to_ready }}"
-          echo "run_id,trigger_time,ready_time,seconds_to_ready" > deploy_metrics.csv
-          echo "${GITHUB_RUN_ID},${TRIGGER},${READY},${SECONDS}" >> deploy_metrics.csv
+          echo "run_id,trigger_time" > deploy_metrics.csv
+          echo "${GITHUB_RUN_ID},${TRIGGER}" >> deploy_metrics.csv
           cat deploy_metrics.csv
 
       - name: Upload deploy metrics
