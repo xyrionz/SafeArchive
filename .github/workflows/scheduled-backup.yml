@@ -1,0 +1,66 @@
+name: Scheduled Backup (automated)
+
+on:
+  schedule:
+    # daily at 03:00 UTC — change cron as needed
+    - cron: '0 3 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  scheduled-backup:
+    runs-on: ubuntu-latest
+    env:
+      PUBLIC_URL: ${{ secrets.PUBLIC_URL }}
+      API_KEY: ${{ secrets.SERVICE_API_KEY }}
+      BACKUP_PASSWORD: ${{ secrets.BACKUP_PASSWORD }}
+
+    steps:
+      - name: Checkout (to create sample file)
+        uses: actions/checkout@v4
+
+      - name: Prepare sample file
+        run: |
+          SAMPLE=scheduled-backup-sample.txt
+          echo "scheduled backup run at $(date -u +"%Y-%m-%dT%H:%M:%SZ")" > "$SAMPLE"
+          ls -l "$SAMPLE"
+
+      - name: POST sample file to /backup
+        id: backup_call
+        run: |
+          set -e
+          SAMPLE=scheduled-backup-sample.txt
+          BACKUP_NAME="scheduled_backup_$(date -u +%Y%m%dT%H%M%SZ)"
+          echo "Calling ${PUBLIC_URL}/backup (backup_name=$BACKUP_NAME)"
+          HTTP_CODE=$(curl -s -o response.json -w "%{http_code}" \
+            -H "x-api-key: ${API_KEY}" \
+            -F "file=@${SAMPLE}" \
+            -F "backup_name=${BACKUP_NAME}" \
+            -F "password=${BACKUP_PASSWORD}" \
+            "${PUBLIC_URL}/backup" || echo "000")
+          echo "http_code=$HTTP_CODE" > http_code.txt
+          cat response.json || true
+          jq -r '.' response.json > pretty_response.json || cp response.json pretty_response.json || true
+          echo "HTTP_CODE=${HTTP_CODE}" >> http_code.txt
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "Backup failed with HTTP $HTTP_CODE"
+            cat response.json
+            exit 1
+          fi
+          echo "Backup succeeded"
+          cat pretty_response.json
+      - name: Save logs
+        run: |
+          mkdir -p scheduled-backup-logs
+          cp response.json scheduled-backup-logs/response.json || true
+          cp pretty_response.json scheduled-backup-logs/pretty_response.json || true
+          cp http_code.txt scheduled-backup-logs/http_code.txt || true
+          ls -la scheduled-backup-logs
+      - name: Upload scheduled backup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: scheduled-backup-logs
+          path: scheduled-backup-logs
