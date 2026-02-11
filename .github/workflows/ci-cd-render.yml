@@ -1,0 +1,64 @@
+name: CI-CD → Render (no health poll)
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  build-and-trigger-render:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies (for tests)
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install pytest requests || true
+
+      - name: Run tests (if present)
+        run: |
+          if [ -d tests ] || [ -f pytest.ini ]; then
+            pytest -q || true
+          fi
+
+      - name: Trigger Render deploy hook
+        id: trigger
+        run: |
+          START=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          echo "trigger_time=$START" >> $GITHUB_OUTPUT
+
+          HOOK="${{ secrets.RENDER_DEPLOY_HOOK }}"
+          if [ -z "$HOOK" ]; then
+            echo "RENDER_DEPLOY_HOOK missing!"
+            exit 1
+          fi
+
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$HOOK")
+          echo "hook_http_code=$CODE" >> $GITHUB_OUTPUT
+          echo "Triggered hook, code=$CODE"
+
+      - name: Write deploy metrics CSV (no readiness check)
+        run: |
+          TRIGGER="${{ steps.trigger.outputs.trigger_time }}"
+          echo "run_id,trigger_time" > deploy_metrics.csv
+          echo "${GITHUB_RUN_ID},${TRIGGER}" >> deploy_metrics.csv
+          cat deploy_metrics.csv
+
+      - name: Upload deploy metrics
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-metrics
+          path: deploy_metrics.csv

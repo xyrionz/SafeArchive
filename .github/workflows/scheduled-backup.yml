@@ -1,0 +1,126 @@
+name: Scheduled Backup + Restore Validation
+
+on:
+  schedule:
+    - cron: '0 3 * * *'   # daily 03:00 UTC (adjust if needed)
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  scheduled-backup-validate:
+    runs-on: ubuntu-latest
+    env:
+      PUBLIC_URL: ${{ secrets.PUBLIC_URL }}
+      API_KEY: ${{ secrets.SERVICE_API_KEY }}
+      BACKUP_PASSWORD: ${{ secrets.BACKUP_PASSWORD }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare sample file
+        id: sample
+        run: |
+          SAMPLE=scheduled-backup-sample.txt
+          echo "scheduled backup run at $(date -u +"%Y-%m-%dT%H:%M:%SZ")" > "$SAMPLE"
+          echo "SAMPLE_FILE=$SAMPLE" > meta.env
+          sha256sum "$SAMPLE" > original.sha256
+          cat original.sha256
+
+      - name: POST sample to /backup
+        id: backup_call
+        run: |
+          set -e
+          source meta.env
+          BACKUP_NAME="scheduled_backup_$(date -u +%Y%m%dT%H%M%SZ)"
+          echo "Calling ${PUBLIC_URL}/backup (backup_name=${BACKUP_NAME})"
+          HTTP_CODE=$(curl -s -o response.json -w "%{http_code}" \
+            -H "x-api-key: ${API_KEY}" \
+            -F "file=@${SAMPLE_FILE}" \
+            -F "backup_name=${BACKUP_NAME}" \
+            -F "password=${BACKUP_PASSWORD}" \
+            "${PUBLIC_URL}/backup" || echo "000")
+          echo "HTTP_CODE_BACKUP=${HTTP_CODE}" > http_codes.txt
+          jq -r '.' response.json > pretty_response.json || cp response.json pretty_response.json || true
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "BACKUP_FAILED" > validation.txt
+            echo "HTTP_CODE_BACKUP=${HTTP_CODE}" >> validation.txt
+            cat response.json || true
+            exit 1
+          fi
+          BACKUP_FILE=$(jq -r '.backup_file' response.json)
+          echo "BACKUP_FILE=${BACKUP_FILE}" >> meta.env
+          echo "Backup succeeded: ${BACKUP_FILE}"
+
+      - name: Download backup via /download
+        id: download_call
+        run: |
+          set -e
+          source meta.env
+          mkdir -p artifacts
+          echo "Downloading ${BACKUP_FILE} from ${PUBLIC_URL}/download"
+          HTTP_CODE_DL=$(curl -s -w "%{http_code}" -o artifacts/${BACKUP_FILE} \
+            "${PUBLIC_URL}/download?backup=${BACKUP_FILE}&api_key=${API_KEY}" || echo "000")
+          echo "HTTP_CODE_DOWNLOAD=${HTTP_CODE_DL}" >> http_codes.txt
+          ls -la artifacts
+
+      - name: Call /restore to get restored zip
+        id: restore_call
+        run: |
+          set -e
+          source meta.env
+          # restore returns a zip; save it
+          curl -s -H "x-api-key: ${API_KEY}" -F "backup=${BACKUP_FILE}" -F "password=${BACKUP_PASSWORD}" \
+            "${PUBLIC_URL}/restore" -o restored.zip || true
+          RESTORE_SIZE=$(stat -c%s restored.zip || echo 0)
+          echo "RESTORE_SIZE=${RESTORE_SIZE}" >> http_codes.txt
+          mkdir -p artifacts/restored
+          unzip -o restored.zip -d artifacts/restored || true
+          ls -la artifacts/restored || true
+
+      - name: Validate checksums
+        run: |
+          set -e || true
+          SAMPLE=$(sed -n '1p' meta.env | cut -d'=' -f2)
+          echo "Comparing checksums..."
+          sha256sum -c original.sha256 > checksum_result.txt || true
+          cat checksum_result.txt || true
+          RESTORED_FILE="./artifacts/restored/$SAMPLE"
+          if [ -f "$RESTORED_FILE" ]; then
+            sha256sum "$RESTORED_FILE" > restored.sha256
+            echo "ORIGINAL:"
+            cat original.sha256
+            echo "RESTORED:"
+            cat restored.sha256
+            if cmp -s <(cut -d' ' -f1 original.sha256) <(cut -d' ' -f1 restored.sha256); then
+              echo "VALIDATION: PASS" > validation.txt
+            else
+              echo "VALIDATION: FAIL - checksum mismatch" > validation.txt
+            fi
+          else
+            echo "VALIDATION: FAIL - restored file not found at $RESTORED_FILE" > validation.txt
+          fi
+          cat validation.txt
+
+      - name: Save logs & artifacts
+        run: |
+          mkdir -p scheduled-backup-validation
+          cp response.json scheduled-backup-validation/response_backup.json || true
+          cp pretty_response.json scheduled-backup-validation/pretty_response.json || true
+          cp http_codes.txt scheduled-backup-validation/http_codes.txt || true
+          cp validation.txt scheduled-backup-validation/validation.txt || true
+          cp original.sha256 scheduled-backup-validation/original.sha256 || true
+          cp restored.sha256 scheduled-backup-validation/restored.sha256 || true
+          ls -la scheduled-backup-validation
+          ls -la artifacts || true
+
+      - name: Upload scheduled backup validation artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: scheduled-backup-validation
+          path: |
+            scheduled-backup-validation
+            artifacts
